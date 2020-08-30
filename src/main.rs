@@ -46,11 +46,18 @@ impl<T> Vec<T> {
     }
 }
 
-fn main() {
-    let mut a = Vec::<usize>::new();
-    a.grow();
-    assert!(a.cap == 1);
-    a.grow();
-    assert!(a.cap == 2);
-    println!("OK!");
+fn main() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_grow() {
+        let mut a = Vec::<usize>::new();
+        a.grow();
+        assert!(a.cap == 1);
+        a.grow();
+        assert!(a.cap == 2);
+        println!("OK!");
+    }
 }
