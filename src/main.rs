@@ -34,7 +34,8 @@ impl<T> Vec<T> {
                     // Since LLVM doesn't have unsigned integer type, the allowed maximum usize is isize:MAX
                     panic!("capacity overflow");
                 }
-                let new_ptr = alloc::realloc(self.ptr.as_ptr() as *mut _, layout, new_cap);
+                let new_ptr =
+                    alloc::realloc(self.ptr.as_ptr() as *mut _, layout, new_cap * layout.size());
                 if new_ptr.is_null() {
                     alloc::rust_oom(layout);
                 }
