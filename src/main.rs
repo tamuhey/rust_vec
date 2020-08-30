@@ -44,6 +44,13 @@ impl<T> Vec<T> {
             self.cap = new_cap;
         }
     }
+    fn push(&mut self, elem: T) {
+        if self.cap == self.len {
+            self.grow()
+        }
+        unsafe { ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem) };
+        self.len += 1;
+    }
 }
 
 fn main() {}
@@ -52,12 +59,19 @@ fn main() {}
 mod tests {
     use super::*;
     #[test]
-    fn test_grow() {
+    fn main() {
         let mut a = Vec::<usize>::new();
         a.grow();
         assert!(a.cap == 1);
         a.grow();
         assert!(a.cap == 2);
         println!("OK!");
+    }
+    #[test]
+    fn push() {
+        let mut a = Vec::<usize>::new();
+        for e in 0..10000 {
+            a.push(e)
+        }
     }
 }
