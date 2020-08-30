@@ -52,6 +52,14 @@ impl<T> Vec<T> {
         unsafe { ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem) };
         self.len += 1;
     }
+    fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
+        }
+    }
 }
 
 fn main() {}
@@ -69,11 +77,17 @@ mod tests {
         println!("OK!");
     }
     #[test]
-    fn push() {
+    fn push_pop() {
         let mut a = Vec::<usize>::new();
-        for i in 0..10000 {
+        let n = 1000000;
+        for i in 0..n {
             a.push(i);
             unsafe { assert_eq!(ptr::read(a.ptr.as_ptr().add(i)), i) }
         }
+        for i in (0..n).rev() {
+            let e = a.pop().unwrap();
+            assert_eq!(i, e);
+        }
+        assert_eq!(a.pop(), None);
     }
 }
