@@ -71,8 +71,9 @@ mod tests {
     #[test]
     fn push() {
         let mut a = Vec::<usize>::new();
-        for e in 0..10000 {
-            a.push(e)
+        for i in 0..10000 {
+            a.push(i);
+            unsafe { assert_eq!(ptr::read(a.ptr.as_ptr().add(i)), i) }
         }
     }
 }
