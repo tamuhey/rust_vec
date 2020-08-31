@@ -62,6 +62,20 @@ impl<T> Vec<T> {
             unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
         }
     }
+    fn insert(&mut self, index: usize, elem: T) {
+        assert!(index <= self.len, "index out of bounds");
+        if self.len == self.cap {
+            self.grow()
+        }
+        let p = self.ptr.as_ptr();
+        unsafe {
+            if index < self.len {
+                ptr::copy(p.add(index), p.add(index + 1), self.len - index);
+            }
+            ptr::write(p.add(index), elem);
+            self.len += 1;
+        }
+    }
 }
 
 impl<T> Drop for Vec<T> {
@@ -137,5 +151,15 @@ mod tests {
         for (i, j) in a.iter().zip(0..n) {
             assert_eq!(*i, j * 2)
         }
+    }
+    #[test]
+    fn insert() {
+        let mut a = Vec::new();
+        let n = 10;
+        for i in 0..n {
+            a.push(i);
+        }
+        a.insert(3, 100);
+        assert_eq!(a[3], 100);
     }
 }
