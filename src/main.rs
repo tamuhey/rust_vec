@@ -3,6 +3,7 @@
 use std::alloc::{self, Layout};
 use std::marker::PhantomData;
 use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::ptr::{self, Unique};
 
 struct Vec<T> {
@@ -77,6 +78,19 @@ impl<T> Drop for Vec<T> {
     }
 }
 
+impl<T> Deref for Vec<T> {
+    type Target = [T];
+    fn deref(&self) -> &Self::Target {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl<T> DerefMut for Vec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
 fn main() {}
 
 #[cfg(test)]
@@ -104,5 +118,24 @@ mod tests {
             assert_eq!(i, e);
         }
         assert_eq!(a.pop(), None);
+    }
+
+    #[test]
+    fn deref() {
+        let mut a = Vec::<usize>::new();
+        let n = 1000000;
+        for i in 0..n {
+            a.push(i);
+            unsafe { assert_eq!(ptr::read(a.ptr.as_ptr().add(i)), i) }
+        }
+        for (i, j) in a.iter().zip(0..n) {
+            assert_eq!(*i, j)
+        }
+        for i in a.iter_mut() {
+            *i *= 2;
+        }
+        for (i, j) in a.iter().zip(0..n) {
+            assert_eq!(*i, j * 2)
+        }
     }
 }
