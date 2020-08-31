@@ -76,6 +76,16 @@ impl<T> Vec<T> {
             self.len += 1;
         }
     }
+    fn remove(&mut self, index: usize) -> T {
+        assert!(index < self.len, "index out of bounds");
+        unsafe {
+            self.len -= 1;
+            let p = self.ptr.as_ptr();
+            let elem = ptr::read(p.add(index));
+            ptr::copy(p.add(index + 1), p.add(index), self.len - index);
+            elem
+        }
+    }
 }
 
 impl<T> Drop for Vec<T> {
@@ -153,13 +163,19 @@ mod tests {
         }
     }
     #[test]
-    fn insert() {
+    fn insert_remove() {
         let mut a = Vec::new();
-        let n = 10;
+        let n = 10000;
         for i in 0..n {
-            a.push(i);
+            a.insert(0, Box::new(i));
         }
-        a.insert(3, 100);
-        assert_eq!(a[3], 100);
+        for (i, j) in (0..n).rev().zip(a.iter()) {
+            assert_eq!(i, **j);
+        }
+        assert_eq!(*a.remove(n / 2), n / 2 - 1);
+        for _ in 0..(n - 1) {
+            a.remove(0);
+        }
+        assert_eq!(a.len, 0);
     }
 }
