@@ -29,13 +29,14 @@ impl<T> Vec<T> {
                 (1, alloc::alloc(layout))
             } else {
                 let new_cap = self.cap * 2;
+                let new_layout = Layout::array::<T>(new_cap).unwrap();
 
-                if self.cap * layout.size() >= std::isize::MAX as usize {
+                if new_layout.size() >= std::isize::MAX as usize {
                     // Since LLVM doesn't have unsigned integer type, the allowed maximum usize is isize:MAX
                     panic!("capacity overflow");
                 }
                 let new_ptr =
-                    alloc::realloc(self.ptr.as_ptr() as *mut _, layout, new_cap * layout.size());
+                    alloc::realloc(self.ptr.as_ptr() as *mut _, layout, new_layout.size());
                 if new_ptr.is_null() {
                     alloc::rust_oom(layout);
                 }
