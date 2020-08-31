@@ -1,6 +1,7 @@
 #![feature(ptr_internals)]
 #![feature(alloc_internals)]
 use std::alloc::{self, Layout};
+use std::iter::{DoubleEndedIterator, IntoIterator, Iterator};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -115,11 +116,91 @@ impl<T> DerefMut for Vec<T> {
     }
 }
 
+struct IntoIter<T> {
+    buf: Unique<T>,
+    start: *const T,
+    end: *const T,
+    cap: usize,
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type IntoIter = IntoIter<T>;
+    type Item = T;
+    fn into_iter(self) -> Self::IntoIter {
+        let buf = self.ptr;
+        let start = self.ptr.as_ptr();
+        let cap = self.cap;
+        let len = self.len;
+
+        // To prevent compiler to call `drop` for each elements
+        mem::forget(self);
+        unsafe {
+            let end = start.add(len);
+            Self::IntoIter {
+                buf,
+                start,
+                end,
+                cap,
+            }
+        }
+    }
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                let ret = ptr::read(self.start);
+                self.start = self.start.add(1);
+                Some(ret)
+            }
+        }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = (self.end as usize - self.start as usize) / mem::size_of::<T>();
+        (len, Some(len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                self.end = self.end.sub(1);
+                let ret = ptr::read(self.end);
+                Some(ret)
+            }
+        }
+    }
+}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        for _ in &mut *self {}
+        unsafe {
+            let layout = Layout::array::<T>(self.cap).unwrap();
+            alloc::dealloc(self.buf.as_ptr() as *mut _, layout);
+        }
+    }
+}
+
 fn main() {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn new_vec(n: usize) -> Vec<Box<usize>> {
+        let mut a = Vec::new();
+        for i in 0..n {
+            a.push(Box::new(i));
+        }
+        a
+    }
     #[test]
     fn main() {
         let mut a = Vec::<usize>::new();
@@ -181,5 +262,23 @@ mod tests {
             a.remove(0);
         }
         assert_eq!(a.len, 0);
+    }
+
+    #[test]
+    fn into_iter() {
+        let n = 10000;
+        let a = new_vec(n);
+        for (i, j) in a.into_iter().zip(0..n) {
+            assert_eq!(*i, j);
+        }
+    }
+
+    #[test]
+    fn double_ended_iterator() {
+        let n = 10000;
+        let a = new_vec(n);
+        for (i, j) in a.into_iter().rev().zip((0..n).rev()) {
+            assert_eq!(*i, j);
+        }
     }
 }
