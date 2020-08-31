@@ -131,15 +131,19 @@ mod tests {
     }
     #[test]
     fn push_pop() {
-        let mut a = Vec::<usize>::new();
+        let mut a = Vec::new();
         let n = 1000000;
         for i in 0..n {
-            a.push(i);
-            unsafe { assert_eq!(ptr::read(a.ptr.as_ptr().add(i)), i) }
+            a.push(Box::new(i));
+            unsafe {
+                let e = ptr::read(a.ptr.as_ptr().add(i));
+                assert_eq!(*e, i);
+                mem::forget(e);
+            }
         }
         for i in (0..n).rev() {
             let e = a.pop().unwrap();
-            assert_eq!(i, e);
+            assert_eq!(i, *e);
         }
         assert_eq!(a.pop(), None);
     }
