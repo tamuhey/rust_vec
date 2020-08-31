@@ -29,7 +29,8 @@ impl<T> Vec<T> {
                 (1, alloc::alloc(layout))
             } else {
                 let new_cap = self.cap * 2;
-                if new_cap * layout.size() >= std::isize::MAX as usize {
+
+                if self.cap * layout.size() >= std::isize::MAX as usize {
                     // Since LLVM doesn't have unsigned integer type, the allowed maximum usize is isize:MAX
                     panic!("capacity overflow");
                 }
@@ -57,6 +58,20 @@ impl<T> Vec<T> {
         } else {
             self.len -= 1;
             unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
+        }
+    }
+}
+
+impl<T> Drop for Vec<T> {
+    fn drop(&mut self) {
+        if self.cap != 0 {
+            let layout = Layout::array::<T>(self.cap).unwrap();
+
+            // LLVM is smart enough to optimize the below if `T: !Drop`
+            while let Some(_) = self.pop() {}
+            unsafe {
+                alloc::dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
         }
     }
 }
