@@ -2,25 +2,33 @@
 #![feature(alloc_internals)]
 use std::alloc::{self, Layout};
 use std::iter::{DoubleEndedIterator, IntoIterator, Iterator};
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, Unique};
 
-struct Vec<T> {
+struct RawVec<T> {
     ptr: Unique<T>,
     cap: usize,
-    len: usize,
 }
 
-impl<T> Vec<T> {
+impl<T> Drop for RawVec<T> {
+    fn drop(&mut self) {
+        if self.cap != 0 {
+            let layout = Layout::array::<T>(self.cap).unwrap();
+            unsafe {
+                alloc::dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
+        }
+    }
+}
+
+impl<T> RawVec<T> {
     pub fn new() -> Self {
         if mem::size_of::<T>() == 0 {
             unimplemented!("ZST is unsupported")
         }
         Self {
             ptr: Unique::dangling(),
-            len: 0,
             cap: 0,
         }
     }
@@ -49,12 +57,30 @@ impl<T> Vec<T> {
             self.cap = new_cap;
         }
     }
+}
+
+struct Vec<T> {
+    buf: RawVec<T>,
+    len: usize,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {
+        Self {
+            buf: RawVec::new(),
+            len: 0,
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.buf.cap
+    }
 
     pub fn push(&mut self, elem: T) {
-        if self.cap == self.len {
-            self.grow()
+        if self.buf.cap == self.len {
+            self.buf.grow()
         }
-        unsafe { ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem) };
+        unsafe { ptr::write(self.buf.ptr.as_ptr().offset(self.len as isize), elem) };
         self.len += 1;
     }
 
@@ -63,16 +89,16 @@ impl<T> Vec<T> {
             None
         } else {
             self.len -= 1;
-            unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
+            unsafe { Some(ptr::read(self.buf.ptr.as_ptr().add(self.len))) }
         }
     }
 
     pub fn insert(&mut self, index: usize, elem: T) {
         assert!(index <= self.len, "index out of bounds");
-        if self.len == self.cap {
-            self.grow()
+        if self.len == self.buf.cap {
+            self.buf.grow()
         }
-        let p = self.ptr.as_ptr();
+        let p = self.buf.ptr.as_ptr();
         unsafe {
             if index < self.len {
                 ptr::copy(p.add(index), p.add(index + 1), self.len - index);
@@ -85,7 +111,7 @@ impl<T> Vec<T> {
         assert!(index < self.len, "index out of bounds");
         unsafe {
             self.len -= 1;
-            let p = self.ptr.as_ptr();
+            let p = self.buf.ptr.as_ptr();
             let elem = ptr::read(p.add(index));
             ptr::copy(p.add(index + 1), p.add(index), self.len - index);
             elem
@@ -95,14 +121,10 @@ impl<T> Vec<T> {
 
 impl<T> Drop for Vec<T> {
     fn drop(&mut self) {
-        if self.cap != 0 {
-            let layout = Layout::array::<T>(self.cap).unwrap();
-
+        if self.buf.cap != 0 {
             // LLVM is smart enough to optimize the below if `T: !Drop`
             while let Some(_) = self.pop() {}
-            unsafe {
-                alloc::dealloc(self.ptr.as_ptr() as *mut _, layout);
-            }
+            // RawVec will dealloc the heap
         }
     }
 }
@@ -110,43 +132,33 @@ impl<T> Drop for Vec<T> {
 impl<T> Deref for Vec<T> {
     type Target = [T];
     fn deref(&self) -> &Self::Target {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { std::slice::from_raw_parts(self.buf.ptr.as_ptr(), self.len) }
     }
 }
 
 impl<T> DerefMut for Vec<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        unsafe { std::slice::from_raw_parts_mut(self.buf.ptr.as_ptr(), self.len) }
     }
 }
 
 struct IntoIter<T> {
-    buf: Unique<T>,
+    buf: RawVec<T>,
     start: *const T,
     end: *const T,
-    cap: usize,
 }
 
 impl<T> IntoIterator for Vec<T> {
     type IntoIter = IntoIter<T>;
     type Item = T;
     fn into_iter(self) -> Self::IntoIter {
-        let buf = self.ptr;
-        let start = self.ptr.as_ptr();
-        let cap = self.cap;
-        let len = self.len;
-
+        let buf = unsafe { ptr::read(&self.buf) };
+        let start = buf.ptr.as_ptr();
+        let end = unsafe { start.add(self.len) };
         // To prevent compiler to call `drop` for each elements
         mem::forget(self);
-        unsafe {
-            let end = start.add(len);
-            Self::IntoIter {
-                buf,
-                start,
-                end,
-                cap,
-            }
-        }
+
+        Self::IntoIter { buf, start, end }
     }
 }
 
@@ -186,10 +198,6 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 impl<T> Drop for IntoIter<T> {
     fn drop(&mut self) {
         for _ in &mut *self {}
-        unsafe {
-            let layout = Layout::array::<T>(self.cap).unwrap();
-            alloc::dealloc(self.buf.as_ptr() as *mut _, layout);
-        }
     }
 }
 
@@ -204,8 +212,8 @@ mod tests {
         a
     }
     #[test]
-    fn main() {
-        let mut a = Vec::<usize>::new();
+    fn grow() {
+        let mut a = RawVec::<usize>::new();
         a.grow();
         assert!(a.cap == 1);
         a.grow();
@@ -219,7 +227,7 @@ mod tests {
         for i in 0..n {
             a.push(Box::new(i));
             unsafe {
-                let e = ptr::read(a.ptr.as_ptr().add(i));
+                let e = ptr::read(a.buf.ptr.as_ptr().add(i));
                 assert_eq!(*e, i);
                 mem::forget(e);
             }
@@ -237,7 +245,7 @@ mod tests {
         let n = 1000000;
         for i in 0..n {
             a.push(i);
-            unsafe { assert_eq!(ptr::read(a.ptr.as_ptr().add(i)), i) }
+            unsafe { assert_eq!(ptr::read(a.buf.ptr.as_ptr().add(i)), i) }
         }
         for (i, j) in a.iter().zip(0..n) {
             assert_eq!(*i, j)
