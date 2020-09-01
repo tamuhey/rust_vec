@@ -14,7 +14,7 @@ struct Vec<T> {
 }
 
 impl<T> Vec<T> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         if mem::size_of::<T>() == 0 {
             unimplemented!("ZST is unsupported")
         }
@@ -24,6 +24,7 @@ impl<T> Vec<T> {
             cap: 0,
         }
     }
+
     fn grow(&mut self) {
         unsafe {
             let layout = Layout::new::<T>();
@@ -48,14 +49,16 @@ impl<T> Vec<T> {
             self.cap = new_cap;
         }
     }
-    fn push(&mut self, elem: T) {
+
+    pub fn push(&mut self, elem: T) {
         if self.cap == self.len {
             self.grow()
         }
         unsafe { ptr::write(self.ptr.as_ptr().offset(self.len as isize), elem) };
         self.len += 1;
     }
-    fn pop(&mut self) -> Option<T> {
+
+    pub fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             None
         } else {
@@ -63,7 +66,8 @@ impl<T> Vec<T> {
             unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
         }
     }
-    fn insert(&mut self, index: usize, elem: T) {
+
+    pub fn insert(&mut self, index: usize, elem: T) {
         assert!(index <= self.len, "index out of bounds");
         if self.len == self.cap {
             self.grow()
@@ -77,7 +81,7 @@ impl<T> Vec<T> {
             self.len += 1;
         }
     }
-    fn remove(&mut self, index: usize) -> T {
+    pub fn remove(&mut self, index: usize) -> T {
         assert!(index < self.len, "index out of bounds");
         unsafe {
             self.len -= 1;
@@ -188,8 +192,6 @@ impl<T> Drop for IntoIter<T> {
         }
     }
 }
-
-fn main() {}
 
 #[cfg(test)]
 mod tests {
