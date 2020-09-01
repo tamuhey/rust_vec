@@ -12,29 +12,16 @@ struct RawVec<T> {
     cap: usize,
 }
 
-impl<T> Drop for RawVec<T> {
-    fn drop(&mut self) {
-        if self.cap != 0 {
-            let layout = Layout::array::<T>(self.cap).unwrap();
-            unsafe {
-                alloc::dealloc(self.ptr.as_ptr() as *mut _, layout);
-            }
-        }
-    }
-}
-
 impl<T> RawVec<T> {
     pub fn new() -> Self {
-        if mem::size_of::<T>() == 0 {
-            unimplemented!("ZST is unsupported")
-        }
         Self {
             ptr: Unique::dangling(),
-            cap: 0,
+            cap: if mem::size_of::<T>() == 0 { !0 } else { 0 },
         }
     }
 
     fn grow(&mut self) {
+        assert!(mem::size_of::<T>() != 0, "capacity overflow");
         unsafe {
             let layout = Layout::new::<T>();
             let (new_cap, new_ptr) = if self.cap == 0 {
@@ -56,6 +43,17 @@ impl<T> RawVec<T> {
             };
             self.ptr = Unique::new(new_ptr as *mut T).unwrap();
             self.cap = new_cap;
+        }
+    }
+}
+
+impl<T> Drop for RawVec<T> {
+    fn drop(&mut self) {
+        if self.cap != 0 && mem::size_of::<T>() != 0 {
+            let layout = Layout::array::<T>(self.cap).unwrap();
+            unsafe {
+                alloc::dealloc(self.ptr.as_ptr() as *mut _, layout);
+            }
         }
     }
 }
@@ -151,7 +149,11 @@ struct RawIter<T> {
 impl<T> RawIter<T> {
     unsafe fn new(slice: &[T]) -> Self {
         let start = slice.as_ptr();
-        let end = start.add(slice.len());
+        let end = if mem::size_of::<T>() == 0 {
+            (start as usize + slice.len()) as *const _
+        } else {
+            start.add(slice.len())
+        };
         Self { start, end }
     }
 }
@@ -162,7 +164,11 @@ impl<T> DoubleEndedIterator for RawIter<T> {
             None
         } else {
             unsafe {
-                self.end = self.end.sub(1);
+                self.end = if mem::size_of::<T>() == 0 {
+                    self.end.sub(1)
+                } else {
+                    (self.end as usize - 1) as *const _
+                };
                 let ret = ptr::read(self.end);
                 Some(ret)
             }
@@ -178,13 +184,22 @@ impl<T> Iterator for RawIter<T> {
         } else {
             unsafe {
                 let ret = ptr::read(self.start);
-                self.start = self.start.add(1);
+                if mem::size_of::<T>() == 0 {
+                    self.start = (self.start as usize + 1) as *const _;
+                } else {
+                    self.start = self.start.add(1);
+                }
                 Some(ret)
             }
         }
     }
+
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = (self.end as usize - self.start as usize) / mem::size_of::<T>();
+        let len = if mem::size_of::<T>() == 0 {
+            self.end as usize - self.start as usize
+        } else {
+            (self.end as usize - self.start as usize) / mem::size_of::<T>()
+        };
         (len, Some(len))
     }
 }
@@ -371,5 +386,28 @@ mod tests {
             assert_eq!(*i, j);
         }
         assert_eq!(a.len(), 0);
+    }
+
+    #[test]
+    fn zst() {
+        #[derive(Debug, Eq, PartialEq)]
+        struct A;
+        let mut a = Vec::new();
+        let n = 10;
+        for _ in 0..n {
+            a.push(A);
+        }
+        let iter = a.into_iter();
+        assert_eq!(iter.size_hint().0, n);
+        assert_eq!(iter.collect::<std::vec::Vec<_>>().len(), n);
+
+        let mut a = Vec::new();
+        let n = 10;
+        for _ in 0..n {
+            a.push(A);
+        }
+        for i in a {
+            assert_eq!(i, A)
+        }
     }
 }
