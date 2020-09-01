@@ -2,6 +2,7 @@
 #![feature(alloc_internals)]
 use std::alloc::{self, Layout};
 use std::iter::{DoubleEndedIterator, IntoIterator, Iterator};
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, Unique};
@@ -142,27 +143,34 @@ impl<T> DerefMut for Vec<T> {
     }
 }
 
-struct IntoIter<T> {
-    buf: RawVec<T>,
+struct RawIter<T> {
     start: *const T,
     end: *const T,
 }
 
-impl<T> IntoIterator for Vec<T> {
-    type IntoIter = IntoIter<T>;
-    type Item = T;
-    fn into_iter(self) -> Self::IntoIter {
-        let buf = unsafe { ptr::read(&self.buf) };
-        let start = buf.ptr.as_ptr();
-        let end = unsafe { start.add(self.len) };
-        // To prevent compiler to call `drop` for each elements
-        mem::forget(self);
-
-        Self::IntoIter { buf, start, end }
+impl<T> RawIter<T> {
+    unsafe fn new(slice: &[T]) -> Self {
+        let start = slice.as_ptr();
+        let end = start.add(slice.len());
+        Self { start, end }
     }
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<T> DoubleEndedIterator for RawIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.start == self.end {
+            None
+        } else {
+            unsafe {
+                self.end = self.end.sub(1);
+                let ret = ptr::read(self.end);
+                Some(ret)
+            }
+        }
+    }
+}
+
+impl<T> Iterator for RawIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         if self.start == self.end {
@@ -181,23 +189,86 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
+struct IntoIter<T> {
+    _buf: RawVec<T>, // just holds the ownership
+    iter: RawIter<T>,
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type IntoIter = IntoIter<T>;
+    type Item = T;
+    fn into_iter(self) -> Self::IntoIter {
+        // Destruction calls `Vec::drop`, so unsafe read is required
+        unsafe {
+            let iter = RawIter::new(&self);
+            let _buf = ptr::read(&self.buf);
+            // To prevent compiler to call `drop` for each elements
+            mem::forget(self);
+
+            Self::IntoIter { _buf, iter }
+        }
+    }
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
 impl<T> DoubleEndedIterator for IntoIter<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.start == self.end {
-            None
-        } else {
-            unsafe {
-                self.end = self.end.sub(1);
-                let ret = ptr::read(self.end);
-                Some(ret)
-            }
-        }
+        self.iter.next_back()
     }
 }
 
 impl<T> Drop for IntoIter<T> {
     fn drop(&mut self) {
-        for _ in &mut *self {}
+        for _ in &mut self.iter {}
+    }
+}
+
+struct Drain<'a, T: 'a> {
+    vec: PhantomData<&'a mut Vec<T>>,
+    iter: RawIter<T>,
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Drain<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back()
+    }
+}
+
+impl<'a, T> Drop for Drain<'a, T> {
+    fn drop(&mut self) {
+        for _ in &mut self.iter {}
+    }
+}
+
+impl<T> Vec<T> {
+    pub fn drain<'a>(&'a mut self) -> Drain<'a, T> {
+        unsafe {
+            let iter = RawIter::new(&self);
+            self.len = 0;
+            Drain {
+                vec: PhantomData,
+                iter,
+            }
+        }
     }
 }
 
@@ -290,5 +361,15 @@ mod tests {
         for (i, j) in a.into_iter().rev().zip((0..n).rev()) {
             assert_eq!(*i, j);
         }
+    }
+    #[test]
+    fn drain() {
+        let n = 10000;
+        let mut a = new_vec(n);
+        let b = a.drain();
+        for (i, j) in b.zip(0..n) {
+            assert_eq!(*i, j);
+        }
+        assert_eq!(a.len(), 0);
     }
 }
